@@ -14,11 +14,18 @@ typedef enum err_t {
   OPENING_FILE_ERR = -2,
 } err_t;
 
+typedef enum inst_arg_parser_err_t {
+  NO_MORE_ARGS      = 1,
+  INST_ARG_OK       = 0,
+  INVALID_REG_INDEX = -1,
+  TOO_MUCH_ARGS     = -2,
+  INST_NOT_FOUND    = -3,
+} inst_arg_parser_err_t;
+
 typedef struct parser_state {
   FILE *src_file;
   FILE *bc_file;
   size_t byte_cnt;
-  bool running;
 } parser_state;
 
 typedef enum arg_type_t {
@@ -37,23 +44,29 @@ typedef struct inst_arg_t {
 } inst_arg_t;
 
 void print_help(const char *argv_0);
-err_t arg_parse(
+err_t argv_parse(
     int argc, char *argv[], char **src_filename, char **bytecode_filename);
 err_t open_files(
     parser_state *state, char *src_filename, char *bytecode_filename);
-void start_parsing(parser_state *state);
 void parser_destruct(parser_state *state);
+void start_parsing(parser_state *state);
+long long inst_match(parser_state *state,
+    const char *name,
+    inst_arg_t *arg_list,
+    long arg_list_size);
+void bc_write(parser_state *state, uint8_t *ptr, size_t size, size_t count);
 void inst_write(parser_state *state,
     opcode_t opcode,
     inst_arg_t *arg_list,
     size_t arg_list_size);
+void log_inst_arg_parser_err(inst_arg_parser_err_t err, long line);
 // void add_label(parser_state *state, const char *name);
 
 int main(int argc, char *argv[]) {
   char *src_filename      = NULL;
   char *bytecode_filename = NULL;
 
-  if (arg_parse(argc, argv, &src_filename, &bytecode_filename) != OK) {
+  if (argv_parse(argc, argv, &src_filename, &bytecode_filename) != OK) {
     print_help(argv[0]);
     return INVALID_OPTION;
   }
@@ -69,7 +82,7 @@ int main(int argc, char *argv[]) {
   parser_destruct(&state);
 }
 
-err_t arg_parse(
+err_t argv_parse(
     int argc, char *argv[], char **src_filename, char **bytecode_filename) {
   int opt = 0;
   while ((opt = getopt(argc, argv, "i:o:")) != -1) {
@@ -131,28 +144,60 @@ void parser_destruct(parser_state *state) {
   fclose(state->bc_file);
 }
 
-typedef enum inst_arg_parser_err_t {
-  NO_MORE_ARGS      = 1,
-  INST_ARG_OK       = 0,
-  INVALID_REG_INDEX = -1,
-  TOO_MUCH_ARGS     = -2,
-  INST_NOT_FOUND    = -3,
-} inst_arg_parser_err_t;
+void start_parsing(parser_state *state) {
+  long line_counter = 0;
+  while (feof(state->src_file) == 0 && ferror(state->src_file) == 0 &&
+         ferror(state->bc_file) == 0) {
+    line_counter += 1;
+    char buf[64] = "";
 
-void log_inst_arg_parser_err(inst_arg_parser_err_t err, long line) {
-  switch (err) {
-  case INVALID_REG_INDEX:
-    fprintf(stderr, "Invalid register index on line: %ld\n", line);
-    break;
-  case TOO_MUCH_ARGS:
-    fprintf(stderr, "Too much arguments for instruction on line: %ld\n", line);
-    break;
-  case INST_NOT_FOUND:
-    fprintf(stderr, "Unexpected instruction on line: %ld\n", line);
-    break;
-  case NO_MORE_ARGS:
-  case INST_ARG_OK:
-    break;
+    // Labels
+    if (fscanf(state->src_file, ":%63[a-z]", buf) > 0) {
+      // add_label(state, buf);
+      fscanf(state->src_file, "%*[^\n]\n");
+      continue;
+    }
+
+    // Instruction
+    if (fscanf(state->src_file, "%63[a-z]", buf) <= 0) {
+      fscanf(state->src_file, "%*[^\n]\n");
+      continue;
+    }
+
+    // Args
+    size_t arg_counter      = 0;
+    inst_arg_t arg_list[64] = {};
+    while (true) {
+      if (arg_counter >= sizeof(arg_list) / sizeof(inst_arg_t)) {
+        log_inst_arg_parser_err(TOO_MUCH_ARGS, line_counter);
+        return;
+      }
+      inst_arg_parser_err_t ret = inst_arg_parse(state, &arg_list[arg_counter]);
+      if (ret == NO_MORE_ARGS)
+        break;
+      if (ret != INST_ARG_OK) {
+        log_inst_arg_parser_err(ret, line_counter);
+        return;
+      }
+      arg_counter += 1;
+    }
+
+    // printf("Line: %d, inst_name: %s, arg_counter: %d\n",
+    //     line_counter,
+    //     buf,
+    //     arg_counter);
+    // for (int t = 0; t < arg_counter; t += 1) {
+    //   printf("%3d %c\n", t, arg_list[t].arg_type);
+    // }
+    // puts("");
+
+    long long res = inst_match(state, buf, arg_list, arg_counter);
+    if (res < 0) {
+      log_inst_arg_parser_err(INST_NOT_FOUND, line_counter);
+      return;
+    }
+
+    inst_write(state, opcode_mapping[res].opcode, arg_list, arg_counter);
   }
 }
 
@@ -246,60 +291,19 @@ void inst_write(parser_state *state,
   }
 }
 
-void start_parsing(parser_state *state) {
-  state->running    = true;
-  long line_counter = 0;
-  while (state->running && feof(state->src_file) == 0 &&
-         ferror(state->src_file) == 0) {
-    line_counter += 1;
-    char buf[64] = "";
-
-    // Labels
-    if (fscanf(state->src_file, ":%63[a-z]", buf) > 0) {
-      // add_label(state, buf);
-      fscanf(state->src_file, "%*[^\n]\n");
-      continue;
-    }
-
-    // Instruction
-    if (fscanf(state->src_file, "%63[a-z]", buf) <= 0) {
-      fscanf(state->src_file, "%*[^\n]\n");
-      continue;
-    }
-
-    // Args
-    size_t arg_counter      = 0;
-    inst_arg_t arg_list[64] = {};
-    while (true) {
-      if (arg_counter >= sizeof(arg_list) / sizeof(inst_arg_t)) {
-        log_inst_arg_parser_err(TOO_MUCH_ARGS, line_counter);
-        return;
-      }
-      inst_arg_parser_err_t ret = inst_arg_parse(state, &arg_list[arg_counter]);
-      if (ret == NO_MORE_ARGS)
-        break;
-      if (ret != INST_ARG_OK) {
-        log_inst_arg_parser_err(ret, line_counter);
-        return;
-      }
-      arg_counter += 1;
-    }
-
-    // printf("Line: %d, inst_name: %s, arg_counter: %d\n",
-    //     line_counter,
-    //     buf,
-    //     arg_counter);
-    // for (int t = 0; t < arg_counter; t += 1) {
-    //   printf("%3d %c\n", t, arg_list[t].arg_type);
-    // }
-    // puts("");
-
-    long long res = inst_match(state, buf, arg_list, arg_counter);
-    if (res < 0) {
-      log_inst_arg_parser_err(INST_NOT_FOUND, line_counter);
-      return;
-    }
-
-    inst_write(state, opcode_mapping[res].opcode, arg_list, arg_counter);
+void log_inst_arg_parser_err(inst_arg_parser_err_t err, long line) {
+  switch (err) {
+  case INVALID_REG_INDEX:
+    fprintf(stderr, "Invalid register index on line: %ld\n", line);
+    break;
+  case TOO_MUCH_ARGS:
+    fprintf(stderr, "Too much arguments for instruction on line: %ld\n", line);
+    break;
+  case INST_NOT_FOUND:
+    fprintf(stderr, "Unexpected instruction on line: %ld\n", line);
+    break;
+  case NO_MORE_ARGS:
+  case INST_ARG_OK:
+    break;
   }
 }
