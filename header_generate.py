@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+import re
+
+src_filename = "spu.c"
+dest_filename = "instructions.h"
+switch_case_filename = "switch_case.c"
+
+with open(src_filename, "r") as src:
+    code = src.read()
+
+with open(dest_filename, "w") as dest:
+    dest.write(
+        "// This file was automatically gnerated from spu.c with header_generate.py\n"
+    )
+
+    res = re.findall(r"#define\s*REG_COUNT.*", code)
+    if len(res) < 1:
+        print("Cant find REG_COUNT define")
+        exit(-1)
+    dest.write(res[0] + "\n")
+
+    res = re.findall(r"#define\s*reg_t.*", code)
+    if len(res) < 1:
+        print("Cant find reg_t define")
+        exit(-1)
+    dest.write(res[0] + "\n")
+
+    res = re.findall(r"#define\s*offset_t.*", code)
+    if len(res) < 1:
+        print("Cant find offset_t define")
+        exit(-1)
+    dest.write(res[0] + "\n")
+
+    res = re.findall(r"#define\s*elem_t.*", code)
+    if len(res) < 1:
+        print("Cant find elem_t define")
+        exit(-1)
+    dest.write(res[0] + "\n")
+
+    res = re.findall(r"#define\s*ELEM_T_FORMAT_STRING.*", code)
+    if len(res) < 1:
+        print("Cant find ELEM_T_FORMAT_STRING define")
+        exit(-1)
+    dest.write(res[0] + "\n")
+
+    res = re.findall("void __spu__([a-z]*)__([a-z]*)\\(.*", code)
+
+    inst_count = len(res)
+
+    dest.write(f"#define INST_COUNT {inst_count}\n")
+
+    if inst_count < 2**8:
+        opcode_type = "uint8_t"
+    elif inst_count < 2**16:
+        opcode_type = "uint16_t"
+    elif inst_count < 2**32:
+        opcode_type = "uint32_t"
+    else:
+        opcode_type = "uint64_t"
+
+    dest.write(f"#define opcode_t {opcode_type}\n")
+
+    dest.write(
+        "typedef struct opcode_mapping_t {const char *name; opcode_t opcode; const char *args;} opcode_mapping_t;\n"
+        "opcode_mapping_t opcode_mapping[] {\n"
+    )
+
+    for idx, match in enumerate(res):
+        name, args = match
+        dest.write(f'{{ "{name}", {idx}, "{args}" }},\n')
+
+    dest.write("};")
+
+with open(switch_case_filename, "w") as file:
+    for idx, match in enumerate(re.finditer("void (__spu__[a-z]*__[a-z]*)\\(.*", code)):
+        file.write(f"""case {idx}:
+    {match.groups()[0]}(state);
+    break;\n""")

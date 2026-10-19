@@ -1,3 +1,4 @@
+#pragma once
 #include "colors.h"
 #include <stdio.h>
 #include <time.h>
