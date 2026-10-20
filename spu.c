@@ -44,6 +44,7 @@ status_code create_buffer_with_file_content(
 ssize_t get_file_size(int fd);
 int read_from_file(uint8_t *buf, size_t size, const int fd);
 void log_err_status_code(status_code err);
+// TODO: Spu dump
 
 // -------------------Util-functions-for-instructions----------------------
 
@@ -68,6 +69,10 @@ void read_reg_arg(spu_state *state, reg_t *dest) {
   }
 }
 
+void read_offset_arg(spu_state *state, offset_t *dest) {
+  read_arg(state, (uint8_t *)dest, sizeof(offset_t));
+}
+
 void jump(spu_state *state, offset_t offset) {
   uint8_t *new_ip = state->ip + offset;
   $info("Trying to jump to code[ %ld ]\n", new_ip - state->code);
@@ -82,11 +87,13 @@ void jump(spu_state *state, offset_t offset) {
 // Instruction function name format:
 // __spu__<instruction name>__<list of arguments characters>
 //
-// instruction name contains only lowercase characters from a to z
+// instruction name contains only lowercase characters from a to z. Names `inf`
+// and `nan` is forbidden, because could be interpreted as float
 //
 // arguments characters:
 // r - register
-// v - value(of elem_t type)
+// v - value (of elem_t type)
+// o - offset (of offset_t type)
 // Example:
 // __spu__leet__rv
 // this function have two arguments: register(r) and elem_t value(v)
@@ -135,15 +142,31 @@ void __spu__div__(spu_state *state) {
 
 void __spu__out__(spu_state *state) {
   elem_t a = stack_pop(state->stack);
-  printf(ELEM_T_FORMAT_STRING, a);
+  printf(ELEM_T_FORMAT_STRING "\n", a);
 }
 
 void __spu__jmp__o(spu_state *state) {
-  offset_t offset = *(offset_t *)state->ip;
-  jump(state, offset - 1);
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  jump(state, offset - sizeof(offset_t));
+}
+
+void __spu__jl__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  elem_t a = stack_pop(state->stack);
+  if (a <= 0) {
+    jump(state, offset - sizeof(offset_t));
+  }
 }
 
 void __spu__hlt__(spu_state *state) { state->is_running = false; }
+
+void __spu__inp__(spu_state *state) {
+  elem_t a = 0;
+  scanf(ELEM_T_FORMAT_STRING, &a);
+  stack_push(state->stack, a);
+}
 
 // ------------------------------------------------------------------------
 
@@ -271,6 +294,7 @@ void spu_init(spu_state *state, uint8_t *code, size_t size) {
 void spu_run(spu_state *state) {
   state->is_running = true;
   while (state->is_running && state->ip < state->code + state->code_size) {
+    // stack_dump(state->stack);
     opcode_t opcode = *(opcode_t *)state->ip;
     $info("Next opcode: %d\n", opcode);
     state->ip += sizeof(opcode_t);
