@@ -24,6 +24,8 @@ typedef enum inst_arg_parser_err_t {
   LABEL_DUPLICATE   = -4,
 } inst_arg_parser_err_t;
 
+const size_t UNDEFINED_LABEL_INDEX = (size_t)-1;
+
 typedef struct fixup {
   size_t label_index;
   size_t fixup_offset;
@@ -31,7 +33,7 @@ typedef struct fixup {
 
 typedef struct label {
   char *name;
-  offset_t offset;
+  size_t offset;
 } label;
 
 typedef struct labels_table {
@@ -77,15 +79,15 @@ void spu_init(parser_state *state);
 void parser_destruct(parser_state *state);
 void start_parsing(parser_state *state);
 inst_arg_parser_err_t inst_arg_parse(parser_state *state, inst_arg_t *inst_arg);
-int start_fixup(parser_state *state);
-long long inst_match(parser_state *state,
-    const char *name,
-    inst_arg_t *arg_list,
-    size_t arg_list_size);
+size_t start_fixup(parser_state *state);
+long long inst_match(
+    const char *name, inst_arg_t *arg_list, size_t arg_list_size);
 void bc_write(parser_state *state, uint8_t *ptr, size_t size, size_t count);
-int add_fixup(parser_state *state, size_t label_index);
-int add_label(parser_state *state, const char *label_name, size_t offset);
-int get_label_index(parser_state *state, const char *label_name);
+size_t add_fixup(parser_state *state, size_t label_index);
+size_t _find_label(parser_state *state, const char *label_name);
+size_t _create_label(parser_state *state, const char *label_name);
+size_t add_label(parser_state *state, const char *label_name, size_t offset);
+size_t get_label_index(parser_state *state, const char *label_name);
 void inst_write(parser_state *state,
     opcode_t opcode,
     inst_arg_t *arg_list,
@@ -113,10 +115,11 @@ int main(int argc, char *argv[]) {
   start_parsing(&state);
 
   if (state.fixup_required) {
-    int ret = start_fixup(&state);
+    size_t ret = start_fixup(&state);
     if (ret != 0) {
-      fprintf(
-          stderr, "Undefined label: %s\n", state.labels.labels_list[ret].name);
+      fprintf(stderr,
+          "Undefined label: %s\n",
+          state.labels.labels_list[ret - 1].name);
     }
   }
 
@@ -208,10 +211,8 @@ void start_parsing(parser_state *state) {
 
     // Labels
     if (fscanf(state->src_file, ";%63[a-z]", buf) > 0) {
-      printf("Adding label: %s\n", buf);
-      int label_index = add_label(state, buf, state->byte_cnt);
-      printf("New index: %d\n", label_index);
-      if (label_index == -1) {
+      size_t label_index = add_label(state, buf, state->byte_cnt);
+      if (label_index == UNDEFINED_LABEL_INDEX) {
         log_inst_arg_parser_err(LABEL_DUPLICATE, ftell(state->src_file));
         return;
       }
@@ -244,7 +245,7 @@ void start_parsing(parser_state *state) {
       arg_counter += 1;
     }
 
-    long long res = inst_match(state, buf, arg_list, arg_counter);
+    long long res = inst_match(buf, arg_list, arg_counter);
     if (res < 0) {
       log_inst_arg_parser_err(INST_NOT_FOUND, ftell(state->src_file));
       return;
@@ -286,17 +287,10 @@ inst_arg_parser_err_t inst_arg_parse(
   return INST_ARG_OK;
 }
 
-long long inst_match(parser_state *state,
-    const char *name,
+long long inst_match(const char *name,
     inst_arg_t *arg_list,
     size_t arg_list_size) { // returns -1 if instruction not found, else -
                             // instruction index
-  printf("Name: %s\nArgs: ", name);
-  for (int i = 0; i < arg_list_size; i += 1) {
-    printf("%c,", arg_list[i].arg_type);
-  }
-  puts("");
-
   for (int i = 0; i < INST_COUNT; i += 1) {
     // TODO: Inst names hashing and binsearch
     if (strcmp(name, opcode_mapping[i].name) == 0) {
@@ -304,7 +298,7 @@ long long inst_match(parser_state *state,
       const char *arg_types = opcode_mapping[i].args;
       bool match            = true;
 
-      for (int j = 0; j < arg_list_size; j += 1) {
+      for (size_t j = 0; j < arg_list_size; j += 1) {
         if (arg_types[j] == '\0' || arg_types[j] != arg_list[j].arg_type) {
           match = false;
           break;
@@ -333,10 +327,10 @@ void inst_write(parser_state *state,
     size_t arg_list_size) {
   bc_write(state, &opcode, sizeof(opcode_t), 1);
 
-  for (int i = 0; i < arg_list_size; i += 1) {
+  for (size_t i = 0; i < arg_list_size; i += 1) {
     switch (arg_list[i].arg_type) {
     case REG_TYPE:
-      bc_write(state, (uint8_t *)&arg_list[i].r_arg, sizeof(reg_t), 1);
+      bc_write(state, &arg_list[i].r_arg, sizeof(reg_t), 1);
       break;
     case VALUE_TYPE:
       bc_write(state, (uint8_t *)&arg_list[i].v_arg, sizeof(elem_t), 1);
@@ -346,9 +340,11 @@ void inst_write(parser_state *state,
       if (arg_list[i].is_label) {
 
         size_t label_index = arg_list[i].l_arg;
-        if (state->labels.labels_list[label_index].offset != -1) {
+        if (state->labels.labels_list[label_index].offset !=
+            UNDEFINED_LABEL_INDEX) {
           offset_t offset =
-              state->labels.labels_list[label_index].offset - state->byte_cnt;
+              (offset_t)(state->labels.labels_list[label_index].offset -
+                         state->byte_cnt);
           bc_write(state, (uint8_t *)&offset, sizeof(offset_t), 1);
         } else {
           state->fixup_required = true;
@@ -361,6 +357,8 @@ void inst_write(parser_state *state,
 
         bc_write(state, (uint8_t *)&arg_list[i].o_arg, sizeof(offset_t), 1);
       }
+      break;
+    default:
       break;
     }
   }
@@ -385,11 +383,12 @@ void log_inst_arg_parser_err(inst_arg_parser_err_t err, long position) {
   case NO_MORE_ARGS:
   case INST_ARG_OK:
     break;
+  default:
+    break;
   }
 }
 
-int _create_label(parser_state *state, const char *label_name) {
-  printf("Creating new label: %s\n", label_name);
+size_t _create_label(parser_state *state, const char *label_name) {
   if (state->labels.labels_list_cap <= state->labels.labels_list_size) {
 
     state->labels.labels_list = (label *)realloc(
@@ -399,35 +398,34 @@ int _create_label(parser_state *state, const char *label_name) {
   }
 
   state->labels.labels_list[state->labels.labels_list_size] =
-      (label){strdup(label_name), -1};
+      (label){strdup(label_name), UNDEFINED_LABEL_INDEX};
   state->labels.labels_list_size += 1;
 
   return state->labels.labels_list_size - 1;
 }
 
-int _find_label(parser_state *state, const char *label_name) {
-  for (int i = 0; i < state->labels.labels_list_size; i += 1) {
+size_t _find_label(parser_state *state, const char *label_name) {
+  for (size_t i = 0; i < state->labels.labels_list_size; i += 1) {
     if (strcmp(state->labels.labels_list[i].name, label_name) == 0) {
       return i;
     }
   }
-  return -1;
+  return UNDEFINED_LABEL_INDEX;
 }
 
-int get_label_index(parser_state *state, const char *label_name) {
-  printf("Getting label index: %s\n", label_name);
-  int ret = _find_label(state, label_name);
-  if (ret != -1)
+size_t get_label_index(parser_state *state, const char *label_name) {
+  size_t ret = _find_label(state, label_name);
+  if (ret != UNDEFINED_LABEL_INDEX)
     return ret;
 
   return _create_label(state, label_name);
 }
 
-int add_label(parser_state *state, const char *label_name, size_t offset) {
-  int ret = _find_label(state, label_name);
-  if (ret != -1) {
-    if (state->labels.labels_list[ret].offset != -1) {
-      return -1;
+size_t add_label(parser_state *state, const char *label_name, size_t offset) {
+  size_t ret = _find_label(state, label_name);
+  if (ret != UNDEFINED_LABEL_INDEX) {
+    if (state->labels.labels_list[ret].offset != UNDEFINED_LABEL_INDEX) {
+      return UNDEFINED_LABEL_INDEX;
     }
   } else
     ret = _create_label(state, label_name);
@@ -436,10 +434,10 @@ int add_label(parser_state *state, const char *label_name, size_t offset) {
   return ret;
 }
 
-int add_fixup(parser_state *state, size_t label_index) {
+size_t add_fixup(parser_state *state, size_t label_index) {
 
   if (label_index >= state->labels.labels_list_size) {
-    return -1;
+    return UNDEFINED_LABEL_INDEX;
   }
 
   if (state->labels.fixup_list_size >= state->labels.fixup_list_cap) {
@@ -455,16 +453,16 @@ int add_fixup(parser_state *state, size_t label_index) {
   return state->labels.fixup_list_size - 1;
 }
 
-int start_fixup(parser_state *state) {
-  for (int i = 0; i < state->labels.fixup_list_size; i += 1) {
-    offset_t offset = state->labels.fixup_list[i].fixup_offset;
-    size_t index    = state->labels.fixup_list[i].label_index;
-    if (state->labels.labels_list[index].offset == -1) {
+size_t start_fixup(parser_state *state) {
+  for (size_t i = 0; i < state->labels.fixup_list_size; i += 1) {
+    size_t offset = state->labels.fixup_list[i].fixup_offset;
+    size_t index  = state->labels.fixup_list[i].label_index;
+    if (state->labels.labels_list[index].offset == UNDEFINED_LABEL_INDEX) {
       return index + 1;
     }
-    fseek(state->bc_file, offset, SEEK_SET);
+    fseek(state->bc_file, (long)offset, SEEK_SET);
 
-    offset_t dif = state->labels.labels_list[index].offset - offset;
+    offset_t dif = (offset_t)(state->labels.labels_list[index].offset - offset);
     fwrite((uint8_t *)&dif, sizeof(offset_t), 1, state->bc_file);
   }
   return 0;
