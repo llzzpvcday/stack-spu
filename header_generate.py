@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 import re
 
-src_filename = "spu.c"
+src_filename = "./spu/spu.c"
 dest_filename = "instructions.h"
-switch_case_filename = "switch_case.c"
+switch_case_filename = "./spu/switch_case.c"
 
 with open(src_filename, "r") as src:
     code = src.read()

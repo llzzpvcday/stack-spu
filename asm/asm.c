@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "instructions.h"
+#include "../instructions.h"
 
 typedef enum err_t {
   OK               = 0,
@@ -30,7 +30,7 @@ typedef struct fixup {
 } fixup;
 
 typedef struct label {
-  const char *name;
+  char *name;
   offset_t offset;
 } label;
 
@@ -81,7 +81,7 @@ int start_fixup(parser_state *state);
 long long inst_match(parser_state *state,
     const char *name,
     inst_arg_t *arg_list,
-    long arg_list_size);
+    size_t arg_list_size);
 void bc_write(parser_state *state, uint8_t *ptr, size_t size, size_t count);
 int add_fixup(parser_state *state, size_t label_index);
 int add_label(parser_state *state, const char *label_name, size_t offset);
@@ -191,8 +191,8 @@ void spu_init(parser_state *state) {
 }
 
 void parser_destruct(parser_state *state) {
-  for (int i = 0; i < state->labels.labels_list_size; i += 1) {
-    free((void *)state->labels.labels_list[i].name);
+  for (size_t i = 0; i < state->labels.labels_list_size; i += 1) {
+    free(state->labels.labels_list[i].name);
   }
 
   free(state->labels.labels_list);
@@ -268,7 +268,7 @@ inst_arg_parser_err_t inst_arg_parse(
       return INVALID_REG_INDEX;
     }
     inst_arg->arg_type = REG_TYPE;
-    inst_arg->r_arg    = reg;
+    inst_arg->r_arg    = (reg_t)reg;
   } else if (fscanf(state->src_file, ">%lld", &offset) > 0) {
     inst_arg->arg_type = OFFSET_TYPE;
     inst_arg->o_arg    = offset;
@@ -289,8 +289,8 @@ inst_arg_parser_err_t inst_arg_parse(
 long long inst_match(parser_state *state,
     const char *name,
     inst_arg_t *arg_list,
-    long arg_list_size) { // returns -1 if instruction not found, else -
-                          // instruction index
+    size_t arg_list_size) { // returns -1 if instruction not found, else -
+                            // instruction index
   printf("Name: %s\nArgs: ", name);
   for (int i = 0; i < arg_list_size; i += 1) {
     printf("%c,", arg_list[i].arg_type);

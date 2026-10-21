@@ -1,3 +1,4 @@
 *.out
 *.log
 .gdb_history
+*.bin

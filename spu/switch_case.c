@@ -33,4 +33,7 @@ case 9:
 case 10:
     __spu__hlt__(state);
     break;
+case 11:
+    __spu__inp__(state);
+    break;
 // clang-format on

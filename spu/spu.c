@@ -14,8 +14,8 @@
 #define ELEM_T_FORMAT_STRING "%lf"
 #include "stack.c"
 
-#define REG_COUNT (uint8_t)9
-#define reg_t     typeof(REG_COUNT)
+#define REG_COUNT 9
+#define reg_t     uint8_t
 #define offset_t  int64_t
 // ------------------------------------------------------
 
@@ -31,7 +31,7 @@ typedef struct spu_state {
 } spu_state;
 #endif /* end of include guard: CPU_STATE_TYPEDEF_H */
 
-#include "instructions.h"
+#include "../instructions.h"
 
 // -------------------Prototypes-------------------------------------------
 
