@@ -119,6 +119,7 @@ uint64_t stack_buf_hash(stack_t *stack);
 stack_status_code verify(stack_t *stack);
 size_t calc_buf_size(size_t capacity);
 void stack_dump(stack_t *stack);
+void stack_dump_values(stack_t *stack);
 elem_t *calloc_stack_buf(size_t capacity);
 elem_t *realloc_stack_buf(elem_t *buf, size_t capacity);
 ON_CANARY(void place_buf_canaries(elem_t *buf, size_t capacity);)
@@ -575,4 +576,35 @@ elem_t stack_pop(stack_t *stack) {
 
   STACK_CHECK(stack)
   return ret;
+}
+void stack_dump_values(stack_t *stack) {
+  $log("----------------Stack dump--------------------------");
+  if (stack == NULL) {
+    $log("\nStack pointer is NULL\n");
+    return;
+  }
+
+  ON_STRUCT_HASH( uint64_t struct_hash = stack_struct_hash(*stack); )
+  ON_BUF_HASH(
+      uint64_t buf_hash = 0;
+
+      if (stack->buf != NULL) {
+        buf_hash = stack_buf_hash(stack);
+      }
+  )
+
+  if (stack->buf != NULL) {
+    for (int i = 0; i < stack->capacity; i += 1) {
+      if (i < stack->size) {
+        $log(BOLD CYAN "\n" GREEN "*[%d]" RESET "\t = ", i);
+      } else {
+        $log("\n " CYAN "[%d]" RESET "\t = ", i);
+      }
+      $log(BYELLOW ELEM_T_FORMAT_STRING RESET, stack->buf[i]);
+    }
+  } else {
+    $log("\nStack data pointer is NULL\n");
+  }
+
+  $log("\n----------------------------------------------------\n");
 }

@@ -43,7 +43,8 @@ status_code create_buffer_with_file_content(
     const char *filename, uint8_t **ptr, size_t *size);
 ssize_t get_file_size(int fd);
 int read_from_file(uint8_t *buf, size_t size, const int fd);
-void log_err_status_code(status_code err);
+void log_err_status_code(spu_state *state, status_code err);
+void spu_dump(spu_state *state);
 // TODO: Spu dump
 
 // -------------------Util-functions-for-instructions----------------------
@@ -64,7 +65,7 @@ void read_reg_arg(spu_state *state, reg_t *dest) {
   reg_t reg = 0;
   read_arg(state, (uint8_t *)&reg, sizeof(reg_t));
   if (reg < 0 || reg >= REG_COUNT) {
-    log_err_status_code(INVALID_REG_INDEX);
+    log_err_status_code(state, INVALID_REG_INDEX);
     exit(INVALID_REG_INDEX);
   }
 }
@@ -75,9 +76,9 @@ void read_offset_arg(spu_state *state, offset_t *dest) {
 
 void jump(spu_state *state, offset_t offset) {
   uint8_t *new_ip = state->ip + offset;
-  $info("Trying to jump to code[ %ld ]\n", new_ip - state->code);
+  $info("Trying to jump to code[ 0x%lx ]\n", new_ip - state->code);
   if (new_ip < state->code || new_ip >= state->code + state->code_size) {
-    log_err_status_code(INVALID_JMP_OFFSET);
+    log_err_status_code(state, INVALID_JMP_OFFSET);
     exit(INVALID_JMP_OFFSET);
   }
   state->ip = new_ip;
@@ -168,6 +169,18 @@ void __spu__inp__(spu_state *state) {
   stack_push(state->stack, a);
 }
 
+void __spu__call__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  stack_push(state->stack, (elem_t)(size_t)state->ip);
+  jump(state, offset - sizeof(offset_t));
+}
+
+void __spu__ret__(spu_state *state) {
+  offset_t offset = (offset_t)stack_pop(state->stack) - (offset_t)state->ip;
+  jump(state, offset);
+}
+
 // ------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
@@ -186,7 +199,7 @@ int main(int argc, char *argv[]) {
       create_buffer_with_file_content(bytecode_filename, &code, &size);
 
   if (ret < 0) {
-    log_err_status_code(ret);
+    log_err_status_code(NULL, ret);
     return ret;
   }
 
@@ -204,7 +217,7 @@ void print_help(const char *argv_0) {
   fprintf(stderr, "Usage: %s <bytecode file>\n", argv_0);
 }
 
-void log_err_status_code(status_code err) {
+void log_err_status_code(spu_state *state, status_code err) {
   char *errno_str = strerror(errno);
   switch (err) {
   case FILE_OPEN_ERR:
@@ -226,11 +239,12 @@ void log_err_status_code(status_code err) {
     $error("Invalid jump offset in bytecode\n");
     break;
   case INVALID_OPCODE:
-    $error("Invalid opcode in bytecode\n");
+    $error("Invalid opcode\n");
     break;
   case STATUS_OK:
     break;
   }
+  spu_dump(state);
 }
 
 ssize_t get_file_size(int fd) {
@@ -296,12 +310,14 @@ void spu_run(spu_state *state) {
   while (state->is_running && state->ip < state->code + state->code_size) {
     // stack_dump(state->stack);
     opcode_t opcode = *(opcode_t *)state->ip;
-    $info("Next opcode: %d\n", opcode);
+    $info("Next opcode: 0x%02x on [0x%lx]\n",
+        opcode,
+        (size_t)(state->ip - state->code));
     state->ip += sizeof(opcode_t);
     switch (opcode) {
 #include "switch_case.c"
     default:
-      log_err_status_code(INVALID_OPCODE);
+      log_err_status_code(state, INVALID_OPCODE);
       exit(INVALID_OPCODE);
     }
   }
@@ -310,4 +326,42 @@ void spu_run(spu_state *state) {
 void spu_destruct(spu_state *state) {
   stack_destruct(state->stack);
   free(state->stack);
+}
+
+void spu_dump(spu_state *state) {
+  $log("----------------SPU-dump----------------------------\n");
+  uint8_t *begin = state->ip - 10;
+  begin          = (begin >= state->code ? begin : state->code);
+  uint8_t *end   = state->ip + 10;
+  end =
+      (end <= state->code + state->code_size ? end
+                                             : state->code + state->code_size);
+
+  $log(GREEN "Code:" RESET "\n... ");
+  for (uint8_t *iter = begin; iter != end; iter += 1) {
+    if (iter == state->ip) {
+      $log(MAGENTA "%02x ", *iter);
+    } else {
+      $log(WHITE "%02x " RESET, *iter);
+    }
+  }
+  $log(" ...\n    ");
+  for (uint8_t *iter = begin; iter != end; iter += 1) {
+    if (iter == state->ip) {
+      $log(MAGENTA " ↑ ");
+    } else {
+      $log("   ");
+    }
+  }
+  $log("\n");
+
+  size_t ip = state->ip - state->code;
+  $log(MAGENTA "IP" RESET " \t = " YELLOW "0x%lx\n" RESET,
+      (size_t)(state->ip - state->code));
+  for (size_t i = 0; i < REG_COUNT; i += 1) {
+    $log(GREEN "r%lu" RESET " \t = " YELLOW "%lf\n" RESET,
+        i,
+        state->registers[i]);
+  }
+  stack_dump_values(state->stack);
 }

@@ -5,7 +5,7 @@
 #define offset_t  int64_t
 #define elem_t               double
 #define ELEM_T_FORMAT_STRING "%lf"
-#define INST_COUNT 12
+#define INST_COUNT 14
 #define opcode_t uint8_t
 typedef struct opcode_mapping_t {const char *name; opcode_t opcode; const char *args;} opcode_mapping_t;
 opcode_mapping_t opcode_mapping[] {
@@ -21,5 +21,7 @@ opcode_mapping_t opcode_mapping[] {
 { "jl", 9, "o" },
 { "hlt", 10, "" },
 { "inp", 11, "" },
+{ "call", 12, "o" },
+{ "ret", 13, "" },
 };
 // clang-format on

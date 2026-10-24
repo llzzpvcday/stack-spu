@@ -9,3 +9,4 @@
 #define BLUE      "\033[1;34m"
 #define MAGENTA   "\033[1;35m"
 #define BYELLOW   "\033[1;93m"
+#define WHITE     "\033[1;37m"

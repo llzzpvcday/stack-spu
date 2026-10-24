@@ -2,5 +2,5 @@
 *.log
 .gdb_history
 *.bin
-*._asm
+test.asm
 test.c

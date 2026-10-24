@@ -36,4 +36,10 @@ case 10:
 case 11:
     __spu__inp__(state);
     break;
+case 12:
+    __spu__call__o(state);
+    break;
+case 13:
+    __spu__ret__(state);
+    break;
 // clang-format on
