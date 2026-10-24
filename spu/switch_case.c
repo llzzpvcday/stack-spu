@@ -7,39 +7,51 @@ case 1:
     __spu__push__v(state);
     break;
 case 2:
-    __spu__pop__r(state);
+    __spu__push__m(state);
     break;
 case 3:
-    __spu__add__(state);
+    __spu__push__M(state);
     break;
 case 4:
-    __spu__sub__(state);
+    __spu__pop__r(state);
     break;
 case 5:
-    __spu__mul__(state);
+    __spu__pop__m(state);
     break;
 case 6:
-    __spu__div__(state);
+    __spu__pop__M(state);
     break;
 case 7:
-    __spu__out__(state);
+    __spu__add__(state);
     break;
 case 8:
-    __spu__jmp__o(state);
+    __spu__sub__(state);
     break;
 case 9:
-    __spu__jl__o(state);
+    __spu__mul__(state);
     break;
 case 10:
-    __spu__hlt__(state);
+    __spu__div__(state);
     break;
 case 11:
-    __spu__inp__(state);
+    __spu__out__(state);
     break;
 case 12:
-    __spu__call__o(state);
+    __spu__jmp__o(state);
     break;
 case 13:
+    __spu__jl__o(state);
+    break;
+case 14:
+    __spu__hlt__(state);
+    break;
+case 15:
+    __spu__inp__(state);
+    break;
+case 16:
+    __spu__call__o(state);
+    break;
+case 17:
     __spu__ret__(state);
     break;
 // clang-format on

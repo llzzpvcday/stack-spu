@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,6 +23,8 @@ typedef enum inst_arg_parser_err_t {
   TOO_MUCH_ARGS     = -2,
   INST_NOT_FOUND    = -3,
   LABEL_DUPLICATE   = -4,
+  INVALID_MEM_INDEX = -5,
+  INVALID_MEM_EXPR  = -6,
 } inst_arg_parser_err_t;
 
 const size_t UNDEFINED_LABEL_INDEX = (size_t)-1;
@@ -56,9 +59,11 @@ typedef struct parser_state {
 } parser_state;
 
 typedef enum arg_type_t {
-  REG_TYPE    = 'r',
-  VALUE_TYPE  = 'v',
-  OFFSET_TYPE = 'o',
+  REG_TYPE     = 'r',
+  VALUE_TYPE   = 'v',
+  OFFSET_TYPE  = 'o',
+  MEM_REG_TYPE = 'm',
+  MEM_VAL_TYPE = 'M',
 } arg_type_t;
 
 typedef struct inst_arg_t {
@@ -80,7 +85,7 @@ void parser_destruct(parser_state *state);
 void start_parsing(parser_state *state);
 inst_arg_parser_err_t inst_arg_parse(parser_state *state, inst_arg_t *inst_arg);
 size_t start_fixup(parser_state *state);
-long long inst_match(
+int64_t inst_match(
     const char *name, inst_arg_t *arg_list, size_t arg_list_size);
 void bc_write(parser_state *state, uint8_t *ptr, size_t size, size_t count);
 size_t add_fixup(parser_state *state, size_t label_index);
@@ -92,7 +97,7 @@ void inst_write(parser_state *state,
     opcode_t opcode,
     inst_arg_t *arg_list,
     size_t arg_list_size);
-void log_inst_arg_parser_err(inst_arg_parser_err_t err, long line);
+void log_inst_arg_parser_err(inst_arg_parser_err_t err, int64_t line);
 
 int main(int argc, char *argv[]) {
   char *src_filename      = NULL;
@@ -245,7 +250,7 @@ void start_parsing(parser_state *state) {
       arg_counter += 1;
     }
 
-    long long res = inst_match(buf, arg_list, arg_counter);
+    int64_t res = inst_match(buf, arg_list, arg_counter);
     if (res < 0) {
       log_inst_arg_parser_err(INST_NOT_FOUND, ftell(state->src_file));
       return;
@@ -257,20 +262,21 @@ void start_parsing(parser_state *state) {
 
 inst_arg_parser_err_t inst_arg_parse(
     parser_state *state, inst_arg_t *inst_arg) {
-  unsigned long long reg = 0;
-  long long offset       = 0;
-  char label_buf[64]     = "";
-  elem_t value           = 0;
+  uint64_t reg       = 0;
+  int64_t offset     = 0;
+  char label_buf[64] = "";
+  elem_t value       = 0;
+  int counter        = 0;
 
   fscanf(state->src_file, "%*[ ]"); // read until next not space char
 
-  if (fscanf(state->src_file, "r%llu", &reg) > 0) {
+  if (fscanf(state->src_file, "r%" PRIu64, &reg) > 0) {
     if (reg >= REG_COUNT) {
       return INVALID_REG_INDEX;
     }
     inst_arg->arg_type = REG_TYPE;
     inst_arg->r_arg    = (reg_t)reg;
-  } else if (fscanf(state->src_file, ">%lld", &offset) > 0) {
+  } else if (fscanf(state->src_file, ">%" PRId64, &offset) > 0) {
     inst_arg->arg_type = OFFSET_TYPE;
     inst_arg->o_arg    = offset;
   } else if (fscanf(state->src_file, ":%63[a-z]", label_buf) > 0) {
@@ -281,17 +287,43 @@ inst_arg_parser_err_t inst_arg_parse(
     inst_arg->arg_type = VALUE_TYPE;
     inst_arg->v_arg    = value;
   } else {
-    return NO_MORE_ARGS;
+    fscanf(state->src_file, "%*1[\[]%n", &counter);
+    if (counter != 0) {
+      if (fscanf(state->src_file, " r%" PRIu64, &reg) > 0) {
+        if (reg >= REG_COUNT)
+          return INVALID_REG_INDEX;
+
+        inst_arg->arg_type = MEM_REG_TYPE;
+        inst_arg->r_arg    = (reg_t)reg;
+
+      } else if (fscanf(state->src_file, ELEM_T_FORMAT_STRING, &value) > 0) {
+        if (value > MEM_SIZE)
+          return INVALID_MEM_INDEX;
+
+        inst_arg->arg_type = MEM_VAL_TYPE;
+        inst_arg->v_arg    = value;
+
+      } else
+        return INVALID_MEM_EXPR;
+
+      fscanf(state->src_file, "%*[ ]");
+      counter = 0;
+      fscanf(state->src_file, "%*1[]]%n", &counter);
+      if (counter == 0)
+        return INVALID_MEM_EXPR;
+
+    } else
+      return NO_MORE_ARGS;
   }
 
   return INST_ARG_OK;
 }
 
-long long inst_match(const char *name,
+int64_t inst_match(const char *name,
     inst_arg_t *arg_list,
     size_t arg_list_size) { // returns -1 if instruction not found, else -
                             // instruction index
-  for (int i = 0; i < INST_COUNT; i += 1) {
+  for (int64_t i = 0; i < INST_COUNT; i += 1) {
     // TODO: Inst names hashing and binsearch
     if (strcmp(name, opcode_mapping[i].name) == 0) {
 
@@ -358,13 +390,19 @@ void inst_write(parser_state *state,
         bc_write(state, (uint8_t *)&arg_list[i].o_arg, sizeof(offset_t), 1);
       }
       break;
+    case MEM_REG_TYPE:
+      bc_write(state, &arg_list[i].r_arg, sizeof(reg_t), 1);
+      break;
+    case MEM_VAL_TYPE:
+      bc_write(state, (uint8_t *)&arg_list[i].v_arg, sizeof(elem_t), 1);
+      break;
     default:
       break;
     }
   }
 }
 
-void log_inst_arg_parser_err(inst_arg_parser_err_t err, long position) {
+void log_inst_arg_parser_err(inst_arg_parser_err_t err, int64_t position) {
   switch (err) {
   case INVALID_REG_INDEX:
     fprintf(stderr, "Invalid register index at position: %ld\n", position);
@@ -380,10 +418,16 @@ void log_inst_arg_parser_err(inst_arg_parser_err_t err, long position) {
   case LABEL_DUPLICATE:
     fprintf(stderr, "Label duplicate at position: %ld\n", position);
     break;
+  case INVALID_MEM_INDEX:
+    fprintf(stderr, "Invalid memory addr at position: %ld\n", position);
+    break;
+  case INVALID_MEM_EXPR:
+    fprintf(stderr,
+        "Invalid expression in memory segment at position: %ld\n",
+        position);
+    break;
   case NO_MORE_ARGS:
   case INST_ARG_OK:
-    break;
-  default:
     break;
   }
 }

@@ -7,4 +7,5 @@ typedef enum status_code {
   INVALID_REG_INDEX  = -5,
   INVALID_JMP_OFFSET = -6,
   INVALID_OPCODE     = -7,
+  INVALID_MEM_INDEX  = -8,
 } status_code;

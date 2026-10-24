@@ -17,6 +17,9 @@
 #define REG_COUNT 9
 #define reg_t     uint8_t
 #define offset_t  int64_t
+#define MEM_SIZE  100
+#define SCREEN_H  10
+#define SCREEN_W  10
 // ------------------------------------------------------
 
 #ifndef CPU_STATE_TYPEDEF_H
@@ -27,6 +30,7 @@ typedef struct spu_state {
   uint8_t *code;
   size_t code_size;
   stack_t *stack;
+  elem_t *memory;
   bool is_running;
 } spu_state;
 #endif /* end of include guard: CPU_STATE_TYPEDEF_H */
@@ -84,6 +88,24 @@ void jump(spu_state *state, offset_t offset) {
   state->ip = new_ip;
 }
 
+elem_t get_mem(spu_state *state, size_t index) {
+  $info("Trying to read memory[ 0x%lx ]\n", index);
+  if (index < 0 || index >= MEM_SIZE) {
+    log_err_status_code(state, INVALID_MEM_INDEX);
+    exit(INVALID_MEM_INDEX);
+  }
+  return state->memory[index];
+}
+
+void put_mem(spu_state *state, size_t index, elem_t elem) {
+  $info("Trying to write memory[ 0x%lx ]\n", index);
+  if (index < 0 || index >= MEM_SIZE) {
+    log_err_status_code(state, INVALID_MEM_INDEX);
+    exit(INVALID_MEM_INDEX);
+  }
+  state->memory[index] = elem;
+}
+
 // -------------------Instructions-----------------------------------------
 // Instruction function name format:
 // __spu__<instruction name>__<list of arguments characters>
@@ -95,6 +117,8 @@ void jump(spu_state *state, offset_t offset) {
 // r - register
 // v - value (of elem_t type)
 // o - offset (of offset_t type)
+// m - memory (addr from register)
+// M - memory (constant addr)
 // Example:
 // __spu__leet__rv
 // this function have two arguments: register(r) and elem_t value(v)
@@ -111,10 +135,34 @@ void __spu__push__v(spu_state *state) {
   stack_push(state->stack, t);
 }
 
+void __spu__push__m(spu_state *state) {
+  reg_t reg = 0;
+  read_reg_arg(state, &reg);
+  stack_push(state->stack, get_mem(state, (size_t)state->registers[reg]));
+}
+
+void __spu__push__M(spu_state *state) {
+  elem_t a = 0;
+  read_value_arg(state, &a);
+  stack_push(state->stack, get_mem(state, (size_t)a));
+}
+
 void __spu__pop__r(spu_state *state) {
   reg_t reg = 0;
   read_reg_arg(state, &reg);
   state->registers[reg] = stack_pop(state->stack);
+}
+
+void __spu__pop__m(spu_state *state) {
+  reg_t reg = 0;
+  read_reg_arg(state, &reg);
+  put_mem(state, (size_t)state->registers[reg], stack_pop(state->stack));
+}
+
+void __spu__pop__M(spu_state *state) {
+  elem_t a = 0;
+  read_value_arg(state, &a);
+  put_mem(state, (size_t)a, stack_pop(state->stack));
 }
 
 void __spu__add__(spu_state *state) {
@@ -303,6 +351,7 @@ void spu_init(spu_state *state, uint8_t *code, size_t size) {
   state->ip        = code;
   state->stack     = (stack_t *)calloc(sizeof(stack_t), 1);
   stack_init(state->stack, 16);
+  state->memory = (elem_t *)calloc(MEM_SIZE, sizeof(elem_t));
 }
 
 void spu_run(spu_state *state) {
@@ -326,6 +375,7 @@ void spu_run(spu_state *state) {
 void spu_destruct(spu_state *state) {
   stack_destruct(state->stack);
   free(state->stack);
+  free(state->memory);
 }
 
 void spu_dump(spu_state *state) {

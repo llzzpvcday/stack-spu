@@ -5,23 +5,28 @@
 #define offset_t  int64_t
 #define elem_t               double
 #define ELEM_T_FORMAT_STRING "%lf"
-#define INST_COUNT 14
+#define MEM_SIZE  100
+#define INST_COUNT 18
 #define opcode_t uint8_t
 typedef struct opcode_mapping_t {const char *name; opcode_t opcode; const char *args;} opcode_mapping_t;
 opcode_mapping_t opcode_mapping[] {
-{ "push", 0, "r" },
-{ "push", 1, "v" },
-{ "pop", 2, "r" },
-{ "add", 3, "" },
-{ "sub", 4, "" },
-{ "mul", 5, "" },
-{ "div", 6, "" },
-{ "out", 7, "" },
-{ "jmp", 8, "o" },
-{ "jl", 9, "o" },
-{ "hlt", 10, "" },
-{ "inp", 11, "" },
-{ "call", 12, "o" },
-{ "ret", 13, "" },
+{ "push", 0x0, "r" },
+{ "push", 0x1, "v" },
+{ "push", 0x2, "m" },
+{ "push", 0x3, "M" },
+{ "pop", 0x4, "r" },
+{ "pop", 0x5, "m" },
+{ "pop", 0x6, "M" },
+{ "add", 0x7, "" },
+{ "sub", 0x8, "" },
+{ "mul", 0x9, "" },
+{ "div", 0xa, "" },
+{ "out", 0xb, "" },
+{ "jmp", 0xc, "o" },
+{ "jl", 0xd, "o" },
+{ "hlt", 0xe, "" },
+{ "inp", 0xf, "" },
+{ "call", 0x10, "o" },
+{ "ret", 0x11, "" },
 };
 // clang-format on
