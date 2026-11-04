@@ -1,26 +1,32 @@
-#include "err_enum.h"
-#include "logging.c"
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
+
+#include "err_enum.h"
+#include "logging.c"
+#include "sound_queue.h"
 
 // DONT CHANGE FORMAT OF THIS SEGMENT, OR INSTRUCTIONS PARSER COULD BREAK
 #define elem_t               double
 #define ELEM_T_FORMAT_STRING "%lf"
 #include "stack.c"
 
-#define REG_COUNT 9
-#define reg_t     uint8_t
-#define offset_t  int64_t
-#define MEM_SIZE  100
-#define SCREEN_H  10
-#define SCREEN_W  10
+#define REG_COUNT        9
+#define reg_t            uint8_t
+#define offset_t         int64_t
+#define MEM_SIZE         500000
+#define SOUND_QUEUE_SIZE 3000
 // ------------------------------------------------------
+
+// #define SOUNDS_ENABLED
+#define FPS_LIMIT_ENABLED
 
 #ifndef CPU_STATE_TYPEDEF_H
 #define CPU_STATE_TYPEDEF_H
@@ -32,8 +38,15 @@ typedef struct spu_state {
   stack_t *stack;
   elem_t *memory;
   bool is_running;
+  size_t screen_h;
+  size_t screen_w;
+  size_t fps;
+  struct timespec frame_start;
+  struct timespec frame_end;
+  sound_queue s_queue;
+  double spu_start_time;
 } spu_state;
-#endif /* end of include guard: CPU_STATE_TYPEDEF_H */
+#endif
 
 #include "../instructions.h"
 
@@ -49,12 +62,16 @@ ssize_t get_file_size(int fd);
 int read_from_file(uint8_t *buf, size_t size, const int fd);
 void log_err_status_code(spu_state *state, status_code err);
 void spu_dump(spu_state *state);
-// TODO: Spu dump
+void play_sounds(spu_state *state);
 
 // -------------------Util-functions-for-instructions----------------------
 
 void read_arg(spu_state *state, uint8_t *dest, size_t size) {
   for (size_t i = 0; i < size; i += 1) {
+    if (state->ip >= state->code + state->code_size) {
+      log_err_status_code(state, IP_OUT_OF_CODE);
+      exit(IP_OUT_OF_CODE);
+    }
     *dest = *(state->ip);
     dest += 1;
     state->ip += 1;
@@ -66,9 +83,8 @@ void read_value_arg(spu_state *state, elem_t *dest) {
 }
 
 void read_reg_arg(spu_state *state, reg_t *dest) {
-  reg_t reg = 0;
-  read_arg(state, (uint8_t *)&reg, sizeof(reg_t));
-  if (reg < 0 || reg >= REG_COUNT) {
+  read_arg(state, (uint8_t *)dest, sizeof(reg_t));
+  if (*dest < 0 || *dest >= REG_COUNT) {
     log_err_status_code(state, INVALID_REG_INDEX);
     exit(INVALID_REG_INDEX);
   }
@@ -150,6 +166,7 @@ void __spu__push__M(spu_state *state) {
 void __spu__pop__r(spu_state *state) {
   reg_t reg = 0;
   read_reg_arg(state, &reg);
+  $info("Popping to reg: %lu\n", reg);
   state->registers[reg] = stack_pop(state->stack);
 }
 
@@ -204,14 +221,14 @@ void __spu__jl__o(spu_state *state) {
   offset_t offset = 0;
   read_offset_arg(state, &offset);
   elem_t a = stack_pop(state->stack);
-  if (a <= 0) {
+  if (a < 0) {
     jump(state, offset - sizeof(offset_t));
   }
 }
 
 void __spu__hlt__(spu_state *state) { state->is_running = false; }
 
-void __spu__inp__(spu_state *state) {
+void __spu__get__(spu_state *state) {
   elem_t a = 0;
   scanf(ELEM_T_FORMAT_STRING, &a);
   stack_push(state->stack, a);
@@ -229,9 +246,127 @@ void __spu__ret__(spu_state *state) {
   jump(state, offset);
 }
 
+void __spu__draw__(spu_state *state) {
+
+  #ifdef FPS_LIMIT_ENABLED
+  clock_gettime(CLOCK_MONOTONIC, &state->frame_end);
+  int64_t frame_time =
+      (state->frame_end.tv_sec * 1000000000 + state->frame_end.tv_nsec) -
+      (state->frame_start.tv_sec * 1000000000 + state->frame_start.tv_nsec);
+  if (frame_time < 1000000000 / state->fps) {
+    struct timespec request = {0, 1000000000 / state->fps - frame_time};
+    nanosleep(&request, NULL);
+  }
+
+  clock_gettime(CLOCK_MONOTONIC, &state->frame_start);
+  #endif
+
+  printf("\033[0;0H");
+  for (int i = 0; i < state->screen_h; i += 1) {
+    for (int j = 0; j < state->screen_w; j += 1) {
+      uint64_t rgb = state->memory[i * state->screen_w + j];
+      printf("\x1b[48;2;%lu;%lu;%lum \x1b[0m",
+          rgb & 0xff,
+          (rgb >> 8) & 0xff,
+          (rgb >> 16) & 0xff);
+    }
+    puts("");
+  }
+  fflush(stdout);
+}
+
+void __spu__setscreensize__(spu_state *state) {
+  state->screen_h = (size_t)stack_pop(state->stack);
+  state->screen_w = (size_t)stack_pop(state->stack);
+}
+
+void __spu__play__(spu_state *state) {
+  double start = stack_pop(state->stack);
+  double dur   = stack_pop(state->stack);
+  double freq  = stack_pop(state->stack);
+
+  if (put_sound(&state->s_queue, (sound){freq, dur, start}) != 0) {
+    log_err_status_code(state, SOUND_QUEUE_IS_FULL);
+  }
+}
+
+void __spu__setfps__(spu_state *state) {
+  state->fps = (size_t)stack_pop(state->stack);
+}
+
+void __spu__sqrt__(spu_state *state) {
+  double a = stack_pop(state->stack);
+  stack_push(state->stack, sqrt(a));
+}
+
+void __spu__jz__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  elem_t a = stack_pop(state->stack);
+  if (a * a <= 0.00000000001) {
+    jump(state, offset - sizeof(offset_t));
+  }
+}
+
+void __spu__jnz__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  elem_t a = stack_pop(state->stack);
+  if (a * a > 0.00000000001) {
+    jump(state, offset - sizeof(offset_t));
+  }
+}
+
+void __spu__jg__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  elem_t a = stack_pop(state->stack);
+  if (a > 0) {
+    jump(state, offset - sizeof(offset_t));
+  }
+}
+
+void __spu__dump__(spu_state *state) { spu_dump(state); }
+
+void __spu__dup__(spu_state *state) {
+  elem_t a = stack_pop(state->stack);
+  stack_push(state->stack, a);
+  stack_push(state->stack, a);
+}
+
+void __spu__jge__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  elem_t a = stack_pop(state->stack);
+  if (a >= 0) {
+    jump(state, offset - sizeof(offset_t));
+  }
+}
+
+void __spu__jle__o(spu_state *state) {
+  offset_t offset = 0;
+  read_offset_arg(state, &offset);
+  elem_t a = stack_pop(state->stack);
+  if (a <= 0) {
+    jump(state, offset - sizeof(offset_t));
+  }
+}
+
+void __spu__sin__(spu_state *state) {
+  elem_t a = stack_pop(state->stack);
+  stack_push(state->stack, sin(a));
+}
+
+void __spu__floor__(spu_state *state) {
+  elem_t a = stack_pop(state->stack);
+  stack_push(state->stack, floor(a));
+}
+
 // ------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
+  setvbuf(stdout, NULL, _IOFBF, 1000000000);
+  // setvbuf(stdout, NULL, _IONBF, 0);
   log_init();
 
   if (argc < 2) {
@@ -290,6 +425,12 @@ void log_err_status_code(spu_state *state, status_code err) {
     $error("Invalid opcode\n");
     break;
   case STATUS_OK:
+    break;
+  case SOUND_QUEUE_IS_FULL:
+    $error("Sound queue is full\n");
+    break;
+  case INVALID_MEM_INDEX:
+  case IP_OUT_OF_CODE:
     break;
   }
   spu_dump(state);
@@ -352,12 +493,27 @@ void spu_init(spu_state *state, uint8_t *code, size_t size) {
   state->stack     = (stack_t *)calloc(sizeof(stack_t), 1);
   stack_init(state->stack, 16);
   state->memory = (elem_t *)calloc(MEM_SIZE, sizeof(elem_t));
+
+  struct timespec cur_time_s = {};
+  clock_gettime(CLOCK_MONOTONIC, &cur_time_s);
+  state->spu_start_time =
+      cur_time_s.tv_sec + (double)cur_time_s.tv_nsec / 1000000000;
+
+  init_sound_queue(&state->s_queue, SOUND_QUEUE_SIZE);
+
+  state->fps = 30;
 }
 
 void spu_run(spu_state *state) {
   state->is_running = true;
   while (state->is_running && state->ip < state->code + state->code_size) {
-    // stack_dump(state->stack);
+
+    #ifdef SOUNDS_ENABLED
+    play_sounds(state);
+    stack_dump(state->stack);
+    spu_dump(state);
+    #endif
+
     opcode_t opcode = *(opcode_t *)state->ip;
     $info("Next opcode: 0x%02x on [0x%lx]\n",
         opcode,
@@ -376,6 +532,30 @@ void spu_destruct(spu_state *state) {
   stack_destruct(state->stack);
   free(state->stack);
   free(state->memory);
+
+  destruct_sound_queue(&state->s_queue);
+}
+
+void play_sounds(spu_state *state) {
+  struct timespec cur_time_s = {};
+  clock_gettime(CLOCK_MONOTONIC, &cur_time_s);
+  double cur_time = cur_time_s.tv_sec +
+                    (double)cur_time_s.tv_nsec / 1000000000 -
+                    state->spu_start_time;
+
+  sound s = {};
+  if (top_sound(&state->s_queue, &s) == 0) {
+    if (s.start <= cur_time) {
+      // $error("Playing sound: freq: %lu, dur: %lu\n",
+      //     (uint64_t)s.freq,
+      //     (uint64_t)(s.dur * 1000));
+      printf("\033[10;%lu]\033[11;%lu]\a",
+          (uint64_t)s.freq,
+          (uint64_t)(s.dur * 1000));
+      fflush(stdout);
+      pop_sound(&state->s_queue, &s);
+    }
+  }
 }
 
 void spu_dump(spu_state *state) {

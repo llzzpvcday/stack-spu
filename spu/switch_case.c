@@ -46,12 +46,54 @@ case 14:
     __spu__hlt__(state);
     break;
 case 15:
-    __spu__inp__(state);
+    __spu__get__(state);
     break;
 case 16:
     __spu__call__o(state);
     break;
 case 17:
     __spu__ret__(state);
+    break;
+case 18:
+    __spu__draw__(state);
+    break;
+case 19:
+    __spu__setscreensize__(state);
+    break;
+case 20:
+    __spu__play__(state);
+    break;
+case 21:
+    __spu__setfps__(state);
+    break;
+case 22:
+    __spu__sqrt__(state);
+    break;
+case 23:
+    __spu__jz__o(state);
+    break;
+case 24:
+    __spu__jnz__o(state);
+    break;
+case 25:
+    __spu__jg__o(state);
+    break;
+case 26:
+    __spu__dump__(state);
+    break;
+case 27:
+    __spu__dup__(state);
+    break;
+case 28:
+    __spu__jge__o(state);
+    break;
+case 29:
+    __spu__jle__o(state);
+    break;
+case 30:
+    __spu__sin__(state);
+    break;
+case 31:
+    __spu__floor__(state);
     break;
 // clang-format on

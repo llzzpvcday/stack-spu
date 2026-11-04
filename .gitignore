@@ -4,3 +4,8 @@
 *.bin
 test.asm
 test.c
+test.py
+legacy_files/
+videos/
+callgrind.out.*
+color-test.py

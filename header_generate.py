@@ -68,7 +68,7 @@ with open(dest_filename, "w") as dest:
 
     dest.write(
         "typedef struct opcode_mapping_t {const char *name; opcode_t opcode; const char *args;} opcode_mapping_t;\n"
-        "opcode_mapping_t opcode_mapping[] {\n"
+        "opcode_mapping_t opcode_mapping[] = {\n"
     )
 
     for idx, match in enumerate(res):

@@ -11,10 +11,10 @@
 
 //-------------------------------------Options-------------------------------------------
 
-#define STACK_ALLOCATED_ENOUGH_CHECK // This check only available with glibc
-#define STACK_STRUCT_HASH_CHECK
-#define STACK_BUF_HASH_CHECK
-#define STACK_CANARY_CHECK
+// #define STACK_ALLOCATED_ENOUGH_CHECK // This check only available with glibc
+// #define STACK_STRUCT_HASH_CHECK
+// #define STACK_BUF_HASH_CHECK
+// #define STACK_CANARY_CHECK
 // #define STACK_DEBUG
 
 //-------------------------------------Defines-------------------------------------------

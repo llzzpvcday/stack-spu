@@ -53,6 +53,7 @@ typedef struct labels_table {
 typedef struct parser_state {
   FILE *src_file;
   FILE *bc_file;
+  FILE *listing_file;
   size_t byte_cnt;
   lables_table labels;
   bool fixup_required;
@@ -76,11 +77,16 @@ typedef struct inst_arg_t {
 } inst_arg_t;
 
 void print_help(const char *argv_0);
-err_t argv_parse(
-    int argc, char *argv[], char **src_filename, char **bytecode_filename);
-err_t open_files(
-    parser_state *state, char *src_filename, char *bytecode_filename);
-void spu_init(parser_state *state);
+err_t argv_parse(int argc,
+    char *argv[],
+    char **src_filename,
+    char **bytecode_filename,
+    char **listing_filename);
+err_t open_files(parser_state *state,
+    char *src_filename,
+    char *bytecode_filename,
+    char *listing_filename);
+void parser_init(parser_state *state);
 void parser_destruct(parser_state *state);
 void start_parsing(parser_state *state);
 inst_arg_parser_err_t inst_arg_parse(parser_state *state, inst_arg_t *inst_arg);
@@ -102,20 +108,24 @@ void log_inst_arg_parser_err(inst_arg_parser_err_t err, int64_t line);
 int main(int argc, char *argv[]) {
   char *src_filename      = NULL;
   char *bytecode_filename = NULL;
+  char *listing_filename  = NULL;
 
-  if (argv_parse(argc, argv, &src_filename, &bytecode_filename) != OK) {
+  if (argv_parse(
+          argc, argv, &src_filename, &bytecode_filename, &listing_filename) !=
+      OK) {
     print_help(argv[0]);
     return INVALID_OPTION;
   }
 
   parser_state state = {};
 
-  if (open_files(&state, src_filename, bytecode_filename) != OK) {
+  if (open_files(&state, src_filename, bytecode_filename, listing_filename) !=
+      OK) {
     fprintf(stderr, "Opening file error: %s\n", strerror(errno));
     return OPENING_FILE_ERR;
   }
 
-  spu_init(&state);
+  parser_init(&state);
 
   start_parsing(&state);
 
@@ -131,16 +141,22 @@ int main(int argc, char *argv[]) {
   parser_destruct(&state);
 }
 
-err_t argv_parse(
-    int argc, char *argv[], char **src_filename, char **bytecode_filename) {
+err_t argv_parse(int argc,
+    char *argv[],
+    char **src_filename,
+    char **bytecode_filename,
+    char **listing_filename) {
   int opt = 0;
-  while ((opt = getopt(argc, argv, "i:o:")) != -1) {
+  while ((opt = getopt(argc, argv, "i:o:l:")) != -1) {
     switch (opt) {
     case 'i':
       *src_filename = optarg;
       break;
     case 'o':
       *bytecode_filename = optarg;
+      break;
+    case 'l':
+      *listing_filename = optarg;
       break;
     default:
       return INVALID_OPTION;
@@ -151,7 +167,8 @@ err_t argv_parse(
 
 void print_help(const char *argv_0) {
   fprintf(stderr,
-      "Usage: %s [-i <input filename>] [-o <output filename>]\n"
+      "Usage: %s [-i <input filename>] [-o <output filename>] [-l <listing "
+      "filename>]\n"
       "Utility for converting file in assembly language to bytecode for spu\n"
       "\n"
       "Options:\n"
@@ -160,12 +177,16 @@ void print_help(const char *argv_0) {
       "-i\n"
       "    Assembly file. Default: `stdin`\n"
       "-o\n"
-      "    Output bytecode file. Default: `stdout`\n",
+      "    Output bytecode file. Default: `stdout`\n"
+      "-l\n"
+      "    Output bytecode listing file. Default: `none`\n",
       argv_0);
 }
 
-err_t open_files(
-    parser_state *state, char *src_filename, char *bytecode_filename) {
+err_t open_files(parser_state *state,
+    char *src_filename,
+    char *bytecode_filename,
+    char *listing_filename) {
 
   if (src_filename == NULL) {
     state->src_file = stdin;
@@ -185,10 +206,19 @@ err_t open_files(
     }
   }
 
+  if (listing_filename == NULL) {
+    state->listing_file = NULL;
+  } else {
+    state->listing_file = fopen(listing_filename, "w");
+    if (state->listing_file == NULL) {
+      return OPENING_FILE_ERR;
+    }
+  }
+
   return OK;
 }
 
-void spu_init(parser_state *state) {
+void parser_init(parser_state *state) {
   state->labels.labels_list =
       (label *)calloc(BASIC_LIST_CAPACITY, sizeof(label));
   state->labels.labels_list_cap = BASIC_LIST_CAPACITY;
@@ -214,8 +244,16 @@ void start_parsing(parser_state *state) {
          ferror(state->bc_file) == 0) {
     char buf[64] = "";
 
+    // Comments
+    int count = 0;
+    do {
+      count = 0;
+      fscanf(state->src_file, "#%*[^\n]\n%n", &count);
+    } while (count > 0);
+
     // Labels
-    if (fscanf(state->src_file, ";%63[a-z]", buf) > 0) {
+    if (fscanf(state->src_file, ";%63[a-z_0-9]", buf) > 0) {
+      // printf("Label: %s\n", buf);
       size_t label_index = add_label(state, buf, state->byte_cnt);
       if (label_index == UNDEFINED_LABEL_INDEX) {
         log_inst_arg_parser_err(LABEL_DUPLICATE, ftell(state->src_file));
@@ -231,6 +269,7 @@ void start_parsing(parser_state *state) {
           ftell(state->src_file));
       return;
     }
+    // printf("Inst: %s\n", buf);
 
     // Args
     size_t arg_counter      = 0;
@@ -268,7 +307,9 @@ inst_arg_parser_err_t inst_arg_parse(
   elem_t value       = 0;
   int counter        = 0;
 
-  fscanf(state->src_file, "%*[ ]"); // read until next not space char
+  int tmp = 0;
+  fscanf(state->src_file, "%*[ ]%n", &tmp); // read until next not space char
+  // printf("TMP: %d\n", tmp);
 
   if (fscanf(state->src_file, "r%" PRIu64, &reg) > 0) {
     if (reg >= REG_COUNT) {
@@ -279,7 +320,7 @@ inst_arg_parser_err_t inst_arg_parse(
   } else if (fscanf(state->src_file, ">%" PRId64, &offset) > 0) {
     inst_arg->arg_type = OFFSET_TYPE;
     inst_arg->o_arg    = offset;
-  } else if (fscanf(state->src_file, ":%63[a-z]", label_buf) > 0) {
+  } else if (fscanf(state->src_file, ":%63[a-z_0-9]", label_buf) > 0) {
     inst_arg->arg_type = OFFSET_TYPE;
     inst_arg->l_arg    = get_label_index(state, label_buf);
     inst_arg->is_label = true;
@@ -323,6 +364,11 @@ int64_t inst_match(const char *name,
     inst_arg_t *arg_list,
     size_t arg_list_size) { // returns -1 if instruction not found, else -
                             // instruction index
+  // printf("Name: %s\n", name);
+  // for (int i = 0; i < arg_list_size; i += 1) {
+  //   printf("%c", arg_list[i].arg_type);
+  // }
+  // puts("");
   for (int64_t i = 0; i < INST_COUNT; i += 1) {
     // TODO: Inst names hashing and binsearch
     if (strcmp(name, opcode_mapping[i].name) == 0) {
@@ -358,6 +404,12 @@ void inst_write(parser_state *state,
     inst_arg_t *arg_list,
     size_t arg_list_size) {
   bc_write(state, &opcode, sizeof(opcode_t), 1);
+  if (state->listing_file != NULL) {
+    fprintf(state->listing_file,
+        "0x%lx %s\n",
+        state->byte_cnt - 1,
+        opcode_mapping[opcode].name);
+  }
 
   for (size_t i = 0; i < arg_list_size; i += 1) {
     switch (arg_list[i].arg_type) {

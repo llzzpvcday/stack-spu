@@ -4,4 +4,4 @@ _asm: $(wildcard ./asm/*)
 	g++ $(CFLAGS) -g ./asm/asm.c -o asm.out
 
 _spu: $(wildcard ./spu/*)
-	g++ $(CFLAGS) -g -fsanitize=address ./spu/spu.c -o spu.out
+	g++ $(CFLAGS) -g  ./spu/spu.c ./spu/sound_queue.c -o spu.out
