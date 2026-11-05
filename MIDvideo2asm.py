@@ -69,8 +69,9 @@ while True:
 
     frame = frame.astype(np.uint32)
     dif = np.where((frame - prev) != 0)
+
     # dif = np.where((frame - prev) * (frame - prev) > 100)
-    for h, w in zip(dif[0], dif[1]):
+    for h, w in sorted(set(zip(dif[0], dif[1])), key=lambda v: v[0] * W + v[1]):
         b, g, r = frame[h, w]
         color = r + g * 256 + b * 256 * 256
         print(f"push {color}")

@@ -16,6 +16,7 @@
 // #define STACK_BUF_HASH_CHECK
 // #define STACK_CANARY_CHECK
 // #define STACK_DEBUG
+// #define STACK_CHECK_ENABLED
 
 //-------------------------------------Defines-------------------------------------------
 
@@ -448,7 +449,11 @@ void debug_stack_status_handler(stack_t *stack,
   debug_stack_status_handler(                                                  \
       stack, verify(stack), __func__, __FILE__, __LINE__);
 #else
+#ifdef STACK_CHECK_ENABLED
 #define STACK_CHECK(stack) assert(verify(stack) == STACK_OK);
+#else 
+#define STACK_CHECK(stack)
+#endif
 #endif
 
 ON_CANARY(

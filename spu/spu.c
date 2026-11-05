@@ -12,6 +12,7 @@
 #include "err_enum.h"
 #include "logging.c"
 #include "sound_queue.h"
+#include "draw_queue.h"
 
 // DONT CHANGE FORMAT OF THIS SEGMENT, OR INSTRUCTIONS PARSER COULD BREAK
 #define elem_t               double
@@ -26,7 +27,7 @@
 // ------------------------------------------------------
 
 // #define SOUNDS_ENABLED
-#define FPS_LIMIT_ENABLED
+// #define FPS_LIMIT_ENABLED
 
 #ifndef CPU_STATE_TYPEDEF_H
 #define CPU_STATE_TYPEDEF_H
@@ -45,6 +46,7 @@ typedef struct spu_state {
   struct timespec frame_end;
   sound_queue s_queue;
   double spu_start_time;
+  draw_queue dr_queue;
 } spu_state;
 #endif
 
@@ -179,7 +181,18 @@ void __spu__pop__m(spu_state *state) {
 void __spu__pop__M(spu_state *state) {
   elem_t a = 0;
   read_value_arg(state, &a);
-  put_mem(state, (size_t)a, stack_pop(state->stack));
+
+  size_t offset = (size_t)a;
+  uint64_t rgb = (uint64_t)stack_pop(state->stack);
+  add_pixel_to_draw(&state->dr_queue, (pixel_to_draw) {
+    offset / state->screen_w,
+    offset % state->screen_w,
+    rgb & 0xff,
+    (rgb >> 8) & 0xff,
+    (rgb >> 16) & 0xff
+  });
+
+  put_mem(state, (size_t)a, (elem_t)rgb);
 }
 
 void __spu__add__(spu_state *state) {
@@ -261,23 +274,120 @@ void __spu__draw__(spu_state *state) {
   clock_gettime(CLOCK_MONOTONIC, &state->frame_start);
   #endif
 
-  printf("\033[0;0H");
-  for (int i = 0; i < state->screen_h; i += 1) {
-    for (int j = 0; j < state->screen_w; j += 1) {
-      uint64_t rgb = state->memory[i * state->screen_w + j];
-      printf("\x1b[48;2;%lu;%lu;%lum \x1b[0m",
-          rgb & 0xff,
-          (rgb >> 8) & 0xff,
-          (rgb >> 16) & 0xff);
-    }
-    puts("");
+  static char outbuf[10000000];
+  size_t out_offset = 0;
+  #define oc(chr__) {outbuf[out_offset] = chr__; out_offset += 1;}
+#define od(d__)                                                                \
+  {                                                                            \
+    uint32_t lg = 1000000;                                                     \
+    bool flag   = false;                                                       \
+    while (lg > 0) {                                                           \
+      if ((d__ % (lg * 10)) / lg > 0 || flag) {                                              \
+        flag = true;                                                           \
+        oc('0' + (d__ % (lg * 10)) / lg);                                                    \
+      }                                                                        \
+      lg /= 10;                                                                \
+    }                                                                          \
   }
-  fflush(stdout);
+
+  // printf("\033[0;0H")
+  oc('\033');
+  oc('[');
+  oc('0');
+  oc(';');
+  oc('0');
+  oc('H');
+  size_t y = 0;
+  size_t x = 0;
+  size_t r = -1;
+  size_t g = -1;
+  size_t b = -1;
+  for (pixel_to_draw *iter = state->dr_queue.buf; iter != state->dr_queue.buf + state->dr_queue.offset; iter += 1) {
+    if (iter->x != x || iter->y != y) {
+      y = iter->y;
+      x = iter->x;
+      
+      oc('\033');
+      oc('[');
+      od(y);
+      oc(';');
+      od(x);
+      oc('H');
+      // printf("\033[%lu;%luH", y, x - 1);
+      
+      oc('\x1b');
+      oc('[');
+      oc('4');
+      oc('8');
+      oc(';');
+      oc('2');
+      oc(';');
+      od(iter->r);
+      oc(';');
+      od(iter->g);
+      oc(';');
+      od(iter->b);
+      oc('m');
+      oc(' ');
+      // oc('\x1b');
+      // oc('[');
+      // oc('0');
+      // oc('m');
+      // printf("\x1b[48;2;%hhu;%hhu;%hhum \x1b[0m", iter->r, iter->g, iter->b);
+      r = iter->r;
+      g = iter->g;
+      b = iter->b;
+    } else if (iter->r == r && iter->g == g && iter->b == b) {
+      oc(' ');
+      // putchar(' ');
+    } else {
+      oc('\x1b');
+      oc('[');
+      oc('4');
+      oc('8');
+      oc(';');
+      oc('2');
+      oc(';');
+      od(iter->r);
+      oc(';');
+      od(iter->g);
+      oc(';');
+      od(iter->b);
+      oc('m');
+      oc(' ');
+      // oc('\x1b');
+      // oc('[');
+      // oc('0');
+      // oc('m');
+      // printf("\x1b[48;2;%hhu;%hhu;%hhum \x1b[0m", iter->r, iter->g, iter->b);
+      r = iter->r;
+      g = iter->g;
+      b = iter->b;
+    }
+    x += 1;
+  }
+  // fprintf(stderr, "out_offset: %lu\n", out_offset);
+  write(1, outbuf, out_offset);
+  state->dr_queue.offset = 0;
+  
+  // printf("\033[0;0H");
+  // for (int i = 0; i < state->screen_h; i += 1) {
+  //   for (int j = 0; j < state->screen_w; j += 1) {
+  //     uint64_t rgb = state->memory[i * state->screen_w + j];
+  //     printf("\x1b[48;2;%lu;%lu;%lum \x1b[0m",
+  //         rgb & 0xff,
+  //         (rgb >> 8) & 0xff,
+  //         (rgb >> 16) & 0xff);
+  //   }
+  //   puts("");
+  // }
+  // fflush(stdout);
 }
 
 void __spu__setscreensize__(spu_state *state) {
   state->screen_h = (size_t)stack_pop(state->stack);
   state->screen_w = (size_t)stack_pop(state->stack);
+  init_draw_queue(&state->dr_queue, state->screen_w * state->screen_h * 3);
 }
 
 void __spu__play__(spu_state *state) {
@@ -506,6 +616,8 @@ void spu_init(spu_state *state, uint8_t *code, size_t size) {
 
 void spu_run(spu_state *state) {
   state->is_running = true;
+  
+
   while (state->is_running && state->ip < state->code + state->code_size) {
 
     #ifdef SOUNDS_ENABLED
